@@ -83,7 +83,12 @@ int tcp4_listen(const char *serv) {
 	socklen_t accept_timeout_size = sizeof(accept_timeout);
 	if(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &accept_timeout, accept_timeout_size) == -1)
 		return -1;
-	
+
+	int keepalive = 1;
+	socklen_t keepalive_size = sizeof(keepalive);
+	if(setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, keepalive_size) == -1)
+		return -1;
+
 	return fd;
 }
 
