@@ -1,7 +1,7 @@
 #ifndef _SQLITE_SRV_LOGGER_HEADER__
 #define _SQLITE_SRV_LOGGER_HEADER__
 
-#include <ducq_srv.h>
+#include <ducq_reactor.h>
 
 
 typedef struct sql_logger_t sql_logger_t;

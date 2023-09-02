@@ -9,7 +9,6 @@
 #include <syslog.h>
 #include <sqlite3.h>
 
-#include <ducq_srv.h>
 
 #include "sqlite_srv_logger.h"
 

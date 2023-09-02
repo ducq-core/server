@@ -12,37 +12,43 @@
 
 #include <ducq.h>
 #include <ducq_tcp.h>
-#include <ducq_srv.h>
+#include <ducq_http.h>
+#include <ducq_reactor.h>
+#include <ducq_dispatcher.h>
 
 #include "sqlite_srv_logger.h"
 #define SQLITE_FILENAME "ducq_log.db"
 
 
+int tcp                   = -1;
+int http                  = -1;
+const char *tcp_port      = NULL;
+const char *http_port     = NULL;
+const char *commands_path = NULL;
 
-sql_logger_t *logger = NULL;
-ducq_srv *srv = NULL;
-int tcp = -1;
+sql_logger_t *logger      = NULL;
+ducq_reactor *reactor     = NULL;
 jmp_buf env;
 
 
 
 void signal_handler(int sig) {
 	fprintf(stderr, "received %d\n", sig);
-	ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server", "%d received %d", getpid(), sig);
+	ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server", "%d received %d", getpid(), sig);
 
 	switch(sig) {
 		case SIGTERM:
 		case SIGINT :
-			ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server", "shutdown, pid %d", getpid());
+			ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server", "shutdown, pid %d", getpid());
 			longjmp(env, -1);
 			break;
 		case  SIGQUIT:
-			ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server", "becoming daemon, pid %d", getpid());
+			ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server", "becoming daemon, pid %d", getpid());
 			sql_logger_set_console_log(logger, false);
 			if( daemon(0, 0) )
 				fprintf(stderr, "daemon() failed: %s\n", strerror(errno));
 			else
-				ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server", "became daemon, pid %d", getpid());
+				ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server", "became daemon, pid %d", getpid());
 			break;
 	}
 };
@@ -93,91 +99,122 @@ int tcp4_listen(const char *serv) {
 }
 
 
-ducq_srv *build_ducq_srv(const char *commands_path, sql_logger_t **logger) {
-	ducq_srv *srv = ducq_srv_new();
-	if(!srv) {
-		fprintf(stderr, "ducq_srv_new() failed: %s\n", strerror(errno));
+ducq_reactor *build_reactor() {
+	reactor = ducq_reactor_new();
+	if(!reactor) {
+		fprintf(stderr, "ducq_reactor_new() failed: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	
-	ducq_state state = ducq_srv_load_commands_path(srv, commands_path);
+	ducq_dispatcher *dispatcher = ducq_reactor_get_dispatcher(reactor);
+	ducq_state state = ducq_dispatcher_load_commands_path(dispatcher, commands_path);
 	if(state) {
-		fprintf(stderr, "%s\n", ducq_state_tostr(state));
+		fprintf(stderr, "ducq_dispatcher_load_commands_path() failed: %s\n", ducq_state_tostr(state));
 		exit(EXIT_FAILURE);
 	}
 
 	char *error = NULL;
-	int rc = create_sql_logger(logger, SQLITE_FILENAME, &error);
+	int rc = create_sql_logger(&logger, SQLITE_FILENAME, &error);
 	if(rc) {
 		fprintf(stderr, "create_sql_logger() failed: %s\n", error);
 		exit(EXIT_FAILURE);
 	}
-	ducq_srv_set_log(srv, *logger, sqlite_srv_logger);
+	ducq_reactor_set_log(reactor, logger, sqlite_srv_logger);
 
-	return srv;
+	return reactor;
 }
 
 
+// typedef void (*ducq_accept_f)(ducq_reactor *reactor, int fd, void *ctx);
+// ducq_state ducq_reactor_add_server(ducq_reactor *reactor, int fd, ducq_accept_f accept_f, void *ctx);
 
-int loop() {
-	while(true) {
-		fd_set readfds;
-		FD_ZERO(&readfds);
-		FD_SET(tcp, &readfds);
 
-		int nready = select(tcp+1, &readfds, NULL, NULL, NULL);
-		if( nready == -1) {
-			fprintf(stderr, "select() failed: %s\n", strerror(errno));
-			continue;
-		}
+typedef ducq_i* (*wrap_connection_f)(int fd);
 
-		if(FD_ISSET(tcp, &readfds)) {
-			struct sockaddr_storage cliaddr;
-			socklen_t clilen = sizeof(cliaddr);
+void tcp_accept(ducq_reactor *reactor, int tcp, void *ctx) {
+	wrap_connection_f wrap_connection = (wrap_connection_f)ctx;
 
-			int client = accept(tcp, (struct sockaddr*)&cliaddr, &clilen);
-			if( client == -1 )
-				ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server",
-					"accept() failed: %s\n", strerror(errno)
-				);
+	struct sockaddr_storage cliaddr;
+	socklen_t clilen = sizeof(cliaddr);
 
-			ducq_state state = ducq_tcp_apply(client, (ducq_apply_f)ducq_srv_dispatch, srv);
-			if(state != DUCQ_OK)
-				ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server",
-					"dispatch returned (%d) %s", state, ducq_state_tostr(state)
-				);
-		}
+	int client = accept(tcp, (struct sockaddr*)&cliaddr, &clilen);
+	if(client == -1) {
+		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
+			"accept() failed: %s\n", strerror(errno)
+		);
+		return;
 	}
+
+	ducq_i *ducq = wrap_connection(client);
+	if(!ducq) {
+		close(client);
+		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
+			"ducq_new_tcp"
+		);
+		return;
+	}
+
+	ducq_state state = ducq_reactor_add_client(reactor, client, ducq);
+	if(state != DUCQ_OK)
+		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
+			"dispatch returned (%d) %s", state, ducq_state_tostr(state)
+		);
 }
 
+void load_listeners_in_reactor() {
+	ducq_state state = DUCQ_OK;
 
+	tcp = tcp4_listen(tcp_port);
+	if( tcp == -1) {
+		fprintf(stderr, "tcp4_listen() failed: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	state = ducq_reactor_add_server(reactor, tcp, tcp_accept, ducq_new_tcp_connection);
+	if(state) {
+		fprintf(stderr, "ducq_reactor_add_server() failed: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	printf("http port: %s\n", http_port);
+	if(http_port == NULL) return;
+	http = tcp4_listen(http_port);
+	if( http == -1) {
+		fprintf(stderr, "tcp4_listen() failed: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	state = ducq_reactor_add_server(reactor, http, tcp_accept, ducq_new_http_connection);
+	if(state) {
+		fprintf(stderr, "ducq_reactor_add_server() failed: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+
+	
+}
 
 int main(int argc, char **argv) {
 	if(argc < 2) {
-		fprintf(stderr, "usage\n%s <port>\n", argv[0]);
+		fprintf(stderr, "usage\n%s <tcp-port> [http-port] [commands-path]\n", argv[0]);
 		return -1;
 	}
-	const char *port = argv[1];
-	const char *commands_path = argc > 2 ? argv[2] : NULL;
+	tcp_port      =            argv[1];
+	http_port     = argc > 2 ? argv[2] : NULL;
+	commands_path = argc > 3 ? argv[3] : NULL;
 
-	
-	srv = build_ducq_srv(commands_path, &logger);
-	tcp = tcp4_listen(port);
-	if( tcp == -1) {
-		fprintf(stderr, "tcp4_listen() failed: %s\n", strerror(errno));
-		return -1;
-	}
+	build_reactor();
+	load_listeners_in_reactor();
 
 	if( setjmp(env) ) {
 		close(tcp);
-		ducq_srv_free(srv);
+		close(http);
+		ducq_reactor_free(reactor);
 		free_sql_logger(logger);
 		printf("all done.\n");
 		exit(EXIT_SUCCESS);
 	}
 	set_signals();
 
-	ducq_srv_log(srv, DUCQ_LOG_INFO, __func__, "server", "server started, pid: %d", getpid());
+	ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server", "server started, pid: %d", getpid());
 
-	loop();
+	ducq_loop(reactor);
 }
