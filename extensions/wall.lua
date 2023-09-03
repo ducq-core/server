@@ -1,7 +1,6 @@
-function WALL(requestor, msg)
-	reactor:loop(function (ducq, route)
-		ducq:send("WALL *\n" .. msg.payload)
-		return reactor.continue
-	end)
+function WALL(ducq, msg)
+	for client, route in ducq:clients() do
+		client:send("WALL *\n" .. msg.payload)
+	end
 	return 0
 end
