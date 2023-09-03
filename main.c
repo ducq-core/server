@@ -100,33 +100,42 @@ int tcp4_listen(const char *serv) {
 
 
 ducq_reactor *build_reactor() {
-	reactor = ducq_reactor_new();
-	if(!reactor) {
-		fprintf(stderr, "ducq_reactor_new() failed: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-	
-	ducq_dispatcher *dispatcher = ducq_reactor_get_dispatcher(reactor);
-	ducq_state state = ducq_dispatcher_load_commands_path(dispatcher, commands_path);
-	if(state) {
-		fprintf(stderr, "ducq_dispatcher_load_commands_path() failed: %s\n", ducq_state_tostr(state));
-		exit(EXIT_FAILURE);
-	}
-
+	// log
 	char *error = NULL;
 	int rc = create_sql_logger(&logger, SQLITE_FILENAME, &error);
 	if(rc) {
 		fprintf(stderr, "create_sql_logger() failed: %s\n", error);
 		exit(EXIT_FAILURE);
 	}
-	ducq_reactor_set_log(reactor, logger, sqlite_srv_logger);
+
+	// reactor
+	reactor = ducq_reactor_new_with_log(sqlite_srv_logger, logger);
+	if(!reactor) {
+		fprintf(stderr, "ducq_reactor_new() failed: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	
+	// commands/dispatcher
+	ducq_dispatcher *dispatcher = ducq_reactor_get_dispatcher(reactor);
+	ducq_state state;
+	state = ducq_dispatcher_load_commands_path(dispatcher, commands_path);
+	if(state) {
+		fprintf(stderr, "ducq_dispatcher_load_commands_path() failed: %s\n", ducq_state_tostr(state));
+		exit(EXIT_FAILURE);
+	}
+	state = ducq_dispatcher_add(dispatcher, "./extensions");
+	//state = ducq_dispatcher_add(dispatcher, ".");
+	if(state) {
+		fprintf(stderr, "ducq_dispatcher_add() failed: %s (%s)\n",
+			ducq_state_tostr(state),
+			strerror(errno)
+		);
+		exit(EXIT_FAILURE);
+	}
+
 
 	return reactor;
 }
-
-
-// typedef void (*ducq_accept_f)(ducq_reactor *reactor, int fd, void *ctx);
-// ducq_state ducq_reactor_add_server(ducq_reactor *reactor, int fd, ducq_accept_f accept_f, void *ctx);
 
 
 typedef ducq_i* (*wrap_connection_f)(int fd);
