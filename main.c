@@ -109,7 +109,7 @@ ducq_reactor *build_reactor() {
 	}
 
 	// reactor
-	reactor = ducq_reactor_new_with_log(sqlite_srv_logger, logger);
+	reactor = ducq_reactor_new_with_log(logger, sqlite_srv_logger);
 	if(!reactor) {
 		fprintf(stderr, "ducq_reactor_new() failed: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);

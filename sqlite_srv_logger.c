@@ -90,10 +90,8 @@ int sqlite_srv_logger(void *ctx, enum ducq_log_level level, const char *function
 	sql_logger_t *logger = (sql_logger_t *)ctx;
 	sqlite3 *db = logger->db;
 	
-	char now[] = "YYYY-MM-DDTHH-mm-SS";
-	time_t time_val = time(NULL);
-	struct tm *timeptr = localtime(&time_val);
-	strftime(now, sizeof(now), "%FT%T", timeptr);
+	char now[DUCQ_TIMESTAMP_SIZE] = "";
+	ducq_getnow(now, sizeof(now));
 
 	va_list _args;
 	va_copy(_args, args);
@@ -112,7 +110,7 @@ int sqlite_srv_logger(void *ctx, enum ducq_log_level level, const char *function
 		syslog(LOG_ALERT, "sqlite3_prepare_v2() failed: '%s'\n", sqlite3_errstr(rc));
     return -1;
 	}
-	char *level_str = ducq_loglevel_tostring(level);
+	char *level_str = ducq_level_tostr(level);
 	sqlite3_bind_text(  stmt, 1, now,           strlen(now),           SQLITE_STATIC);
 	sqlite3_bind_text(  stmt, 2, level_str,     strlen(level_str),     SQLITE_STATIC);
 	sqlite3_bind_text(  stmt, 3, function_name, strlen(function_name), SQLITE_STATIC);
@@ -135,7 +133,7 @@ int sqlite_srv_logger(void *ctx, enum ducq_log_level level, const char *function
 
 	if(logger->print_to_console) {
 		va_copy(_args, args);
-		ducq_color_console_log(NULL, level, function_name, sender_id, fmt, _args);
+		ducq_log_tofile(NULL, level, function_name, sender_id, fmt, _args);
 		va_end(_args);
 	}
 
