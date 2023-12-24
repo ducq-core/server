@@ -110,7 +110,7 @@ int sqlite_srv_logger(void *ctx, enum ducq_log_level level, const char *function
 		syslog(LOG_ALERT, "sqlite3_prepare_v2() failed: '%s'\n", sqlite3_errstr(rc));
     return -1;
 	}
-	char *level_str = ducq_level_tostr(level);
+	const char *level_str = ducq_level_tostr(level);
 	sqlite3_bind_text(  stmt, 1, now,           strlen(now),           SQLITE_STATIC);
 	sqlite3_bind_text(  stmt, 2, level_str,     strlen(level_str),     SQLITE_STATIC);
 	sqlite3_bind_text(  stmt, 3, function_name, strlen(function_name), SQLITE_STATIC);

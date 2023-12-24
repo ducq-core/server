@@ -124,7 +124,6 @@ ducq_reactor *build_reactor() {
 		exit(EXIT_FAILURE);
 	}
 	state = ducq_dispatcher_add(dispatcher, "./extensions");
-	//state = ducq_dispatcher_add(dispatcher, ".");
 	if(state) {
 		fprintf(stderr, "ducq_dispatcher_add() failed: %s (%s)\n",
 			ducq_state_tostr(state),
@@ -148,7 +147,7 @@ void tcp_accept(ducq_reactor *reactor, int tcp, void *ctx) {
 
 	int client = accept(tcp, (struct sockaddr*)&cliaddr, &clilen);
 	if(client == -1) {
-		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
+		ducq_reactor_log(reactor, DUCQ_LOG_WARNING, __func__, "server",
 			"accept() failed: %s\n", strerror(errno)
 		);
 		return;
@@ -157,17 +156,28 @@ void tcp_accept(ducq_reactor *reactor, int tcp, void *ctx) {
 	ducq_i *ducq = wrap_connection(client);
 	if(!ducq) {
 		close(client);
-		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
-			"ducq_new_tcp"
+		ducq_reactor_log(reactor, DUCQ_LOG_WARNING, __func__, "server",
+			"ducq_new_tcp() failed: %d", strerror(errno)
 		);
 		return;
 	}
+	if( ducq_timeout(ducq, 1) ) {
+		close(client);
+		ducq_free(ducq);
+		ducq_reactor_log(reactor, DUCQ_LOG_WARNING, __func__, "server",
+			"ducq_timeout() failed : %d", strerror(errno)
+		);
 
+		return;
+	}
 	ducq_state state = ducq_reactor_add_client(reactor, client, ducq);
-	if(state != DUCQ_OK)
-		ducq_reactor_log(reactor, DUCQ_LOG_INFO, __func__, "server",
+	if(state != DUCQ_OK) {
+		close(client);
+		ducq_free(ducq);
+		ducq_reactor_log(reactor, DUCQ_LOG_WARNING, __func__, "server",
 			"dispatch returned (%d) %s", state, ducq_state_tostr(state)
 		);
+	}
 }
 
 void load_listeners_in_reactor() {
