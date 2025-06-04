@@ -5,7 +5,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
-#include <unistd.h>     // daemon()
+#include <unistd.h>     // daemon(), setreuid()
 #include <sys/socket.h> // comm layer, should not be here
 #include <sys/select.h> // select, fd_set
 #include <netinet/in.h>
@@ -17,6 +17,7 @@
 #include <ducq_dispatcher.h>
 
 #include "sqlite_srv_logger.h"
+#define SQLITE_FILEPATH "/var/log/"
 #define SQLITE_FILENAME "ducq_log.db"
 
 
@@ -102,9 +103,15 @@ int tcp4_listen(const char *serv) {
 ducq_reactor *build_reactor() {
 	// log
 	char *error = NULL;
-	int rc = create_sql_logger(&logger, SQLITE_FILENAME, &error);
+	int rc = create_sql_logger(&logger, SQLITE_FILEPATH SQLITE_FILENAME, &error);
 	if(rc) {
 		fprintf(stderr, "create_sql_logger() failed: %s\n", error);
+		exit(EXIT_FAILURE);
+	}
+
+	// log is in /var/log/, drop privilege
+	if (setreuid(getuid(), getuid()) == -1) {
+		fprintf(stderr, "setereuid() failed: %s\n", error);
 		exit(EXIT_FAILURE);
 	}
 
